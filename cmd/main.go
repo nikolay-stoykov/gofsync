@@ -9,7 +9,7 @@ import (
 
 const (
 	controlBlockSize = 1024 * 8
-	fsDirectory      = "/Users/nikolay.stoykov/work/deploy-infra"
+	fsDirectory      = "/home/pankrator/go"
 	hexMetadata      = false
 )
 
@@ -23,6 +23,7 @@ func main() {
 		fsDirectory,
 		filepath.Join(fsDirectory, ".metadata"),
 		fileProcessor,
+		100,
 	)
 
 	if err := dirHasher.ReadFiles(); err != nil {
@@ -30,6 +31,8 @@ func main() {
 	}
 
 	router := watcher.NewRouter(fileProcessor)
+
+	// TODO: Run the watcher before the rehasher but buffer events until the rehasher has finished
 
 	started := make(chan struct{})
 	fsWatcher := watcher.NewWatcher(fsDirectory, metadataFileDir)

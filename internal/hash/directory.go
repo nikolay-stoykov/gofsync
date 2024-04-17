@@ -1,11 +1,12 @@
 package hash
 
 import (
-	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,14 +18,27 @@ type DirectoryHasher struct {
 	metadataDirPath string
 	path            string
 	fileProcessor   PathFileProcessor
+
+	tokens      chan struct{}
+	files       chan *fileInfo
+	concurrency int
+}
+
+type fileInfo struct {
+	path  string
+	entry fs.DirEntry
 }
 
 // NewDirectoryHasher creates a new FileReader with the given directory path and FileHasher.
-func NewDirectoryHasher(path, metadataFilesDir string, fileProcessor PathFileProcessor) *DirectoryHasher {
+func NewDirectoryHasher(path, metadataFilesDir string, fileProcessor PathFileProcessor, concurrency int) *DirectoryHasher {
 	return &DirectoryHasher{
 		path:            path,
 		fileProcessor:   fileProcessor,
 		metadataDirPath: metadataFilesDir,
+
+		tokens:      make(chan struct{}, concurrency),
+		files:       make(chan *fileInfo, 1000),
+		concurrency: concurrency,
 	}
 }
 
@@ -35,30 +49,57 @@ func (fr *DirectoryHasher) ReadFiles() error {
 		return err
 	}
 
+	wg := sync.WaitGroup{}
 	start := time.Now()
 
-	err := filepath.Walk(fr.path, func(path string, info os.FileInfo, err error) error {
+	for i := 0; i < fr.concurrency; i++ {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for file := range fr.files {
+				if strings.Contains(filepath.Dir(file.path), fr.metadataDirPath) {
+					continue
+				}
+
+				if !file.entry.Type().IsRegular() {
+					continue
+				}
+
+				if err := fr.fileProcessor.Process(file.path); err != nil {
+					log.Println(err)
+				}
+			}
+		}()
+	}
+
+	startWalk := time.Now()
+
+	if err := filepath.WalkDir(fr.path, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("walk errored: %w", err)
+			return err
 		}
 
-		if strings.Contains(filepath.Dir(path), fr.metadataDirPath) {
-			return nil
+		fr.files <- &fileInfo{
+			path:  path,
+			entry: d,
 		}
 
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-
-		return fr.fileProcessor.Process(path)
-	})
-
-	if err != nil {
+		return nil
+	}); err != nil {
 		return err
 	}
 
+	close(fr.files)
+
+	elapsedWalk := time.Since(startWalk)
+
+	wg.Wait()
+
 	elapsed := time.Since(start)
 	log.Println("Rehasher finished in", elapsed.Milliseconds())
+	log.Println("File walk finished in", elapsedWalk.Milliseconds())
 
 	return nil
 }

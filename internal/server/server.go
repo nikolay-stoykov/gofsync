@@ -49,9 +49,15 @@ func (s *Server) handleConn(conn net.Conn) {
 	go s.writeLoop(conn)
 }
 
+
 /*
+Notes:
+* Server should know what has been sent to which device last (this information can be saved in a database)
+* Timestamp of the last update should be set at the start of the synchronization between client and server
+* Client should keep the last time it synchronized with the server
+	* Ask the server for all metadata files changed since this timestamp
 1) Send all metadata files to find the discrepancies
-2)
+2) 
 */
 func (s *Server) readLoop(conn net.Conn) {
 	for {
